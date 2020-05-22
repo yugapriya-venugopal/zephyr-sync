@@ -1,16 +1,15 @@
 package lv.ctco.zephyr.service;
 
-import lv.ctco.zephyr.Config;
-import lv.ctco.zephyr.beans.TestCase;
-import lv.ctco.zephyr.beans.TestStep;
-import lv.ctco.zephyr.beans.jira.Issue;
-import lv.ctco.zephyr.beans.zapi.Execution;
-import lv.ctco.zephyr.beans.zapi.ExecutionRequest;
-import lv.ctco.zephyr.beans.zapi.ExecutionResponse;
-import lv.ctco.zephyr.beans.zapi.ZapiTestStep;
-import lv.ctco.zephyr.util.ObjectTransformer;
-import org.apache.http.HttpResponse;
-import org.apache.http.util.EntityUtils;
+import static java.lang.String.format;
+import static lv.ctco.zephyr.enums.ConfigProperty.ORDERED_STEPS;
+import static lv.ctco.zephyr.enums.ConfigProperty.PROJECT_KEY;
+import static lv.ctco.zephyr.enums.ConfigProperty.RELEASE_VERSION;
+import static lv.ctco.zephyr.enums.ConfigProperty.TEST_CYCLE;
+import static lv.ctco.zephyr.util.HttpUtils.ensureResponse;
+import static lv.ctco.zephyr.util.HttpUtils.getAndReturnBody;
+import static lv.ctco.zephyr.util.HttpUtils.post;
+import static lv.ctco.zephyr.util.HttpUtils.put;
+import static lv.ctco.zephyr.util.Utils.log;
 
 import java.io.IOException;
 import java.net.URLEncoder;
@@ -19,10 +18,19 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static java.lang.String.format;
-import static lv.ctco.zephyr.enums.ConfigProperty.*;
-import static lv.ctco.zephyr.util.HttpUtils.*;
-import static lv.ctco.zephyr.util.Utils.log;
+import org.apache.http.HttpResponse;
+
+import lv.ctco.zephyr.Config;
+import lv.ctco.zephyr.beans.TestCase;
+import lv.ctco.zephyr.beans.TestStep;
+import lv.ctco.zephyr.beans.jira.Issue;
+import lv.ctco.zephyr.beans.zapi.Execution;
+import lv.ctco.zephyr.beans.zapi.ExecutionRequest;
+import lv.ctco.zephyr.beans.zapi.ExecutionResponse;
+import lv.ctco.zephyr.beans.zapi.ZapiExecution;
+import lv.ctco.zephyr.beans.zapi.ZapiExecutionResponse;
+import lv.ctco.zephyr.beans.zapi.ZapiTestStep;
+import lv.ctco.zephyr.util.ObjectTransformer;
 
 public class ZephyrService {
 
@@ -219,6 +227,73 @@ public class ZephyrService {
                 continue;
             }
         }
+    }
+    
+    public void mapTestCasesToIssues(List<TestCase> resultTestCases) throws IOException {
+    	Map<String, ZapiExecution> uniqueKeyMap = getTestIssuesOfCycle();
+
+        for (TestCase testCase : resultTestCases) {
+            String testCaseKey = testCase.getKey();
+            String testCaseName = testCase.getName();
+            // case when test case can be matched by id
+            if (testCaseKey != null && uniqueKeyMap.containsKey(testCaseKey)) {
+                testCase.setId(uniqueKeyMap.get(testCaseKey).getIssueId());
+                continue;
+            }
+            // if no exact match by id was found, trying to match by exact name
+            if (testCaseKey == null && testCaseName != null) {
+                    if (uniqueKeyMap.get(testCaseKey).getSummary().equalsIgnoreCase(testCaseName)) {
+                        testCase.setId(uniqueKeyMap.get(testCaseKey).getIssueId());
+                        testCase.setKey(uniqueKeyMap.get(testCaseKey).getIssueKey());
+                        continue;
+                    }
+            }
+            // if no exact match by id or by name, creating new one
+            if (testCaseKey != null) {
+                log(format("INFO: Key %s not found, new Test Case will be created", testCaseKey));
+                testCase.setId(null);
+                testCase.setKey(null);
+                continue;
+            }
+        }
+    }
+    
+	public Map<String, ZapiExecution> getTestIssuesOfCycle() throws IOException {
+		log("Fetching JIRA Test Executions for the project");
+		int skip = 0;
+		String search = "project='" + config.getValue(PROJECT_KEY) + "'%20and%20fixVersion='"
+				+ URLEncoder.encode(config.getValue(RELEASE_VERSION), "UTF-8") + "'%20and%20cycleName='"
+				+ config.getValue(TEST_CYCLE) + "'";
+
+		ZapiExecutionResponse executionResponse = searchExecutionInZQL(search, skip);
+		if (executionResponse == null || executionResponse.getExecutions().isEmpty()) {
+			return new HashMap<>();
+		}
+
+		List<ZapiExecution> executions = executionResponse.getExecutions();
+
+		int totalCount = executionResponse.getTotalCount();
+		if (totalCount > TOP) {
+			while (executions.size() != totalCount) {
+				skip += TOP;
+				List<ZapiExecution> nextPageExecutions = searchExecutionInZQL(search, skip).getExecutions();
+				if (nextPageExecutions.isEmpty()) {
+					break;
+				}
+				executions.addAll(nextPageExecutions);
+			}
+		}
+		Map<String, ZapiExecution> result = new HashMap<>(executions.size());
+		for (ZapiExecution execution : executions) {
+			result.put(execution.getIssueKey(), execution);
+		}
+		log(format("Retrieved %s Test executions\n", executions.size()));
+		return result;
+	}
+	
+	private ZapiExecutionResponse searchExecutionInZQL(String search, int skip) throws IOException {
+        String response = getAndReturnBody(config, "zapi/latest/zql/executeSearch?zqlQuery=" + search + "&offset=" + skip);
+        return ObjectTransformer.deserialize(response, ZapiExecutionResponse.class);
     }
 }
 

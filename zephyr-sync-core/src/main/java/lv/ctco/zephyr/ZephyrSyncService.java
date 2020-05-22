@@ -1,13 +1,17 @@
 package lv.ctco.zephyr;
 
-import lv.ctco.zephyr.beans.TestCase;
-import lv.ctco.zephyr.beans.jira.Issue;
-import lv.ctco.zephyr.util.CustomPropertyNamingStrategy;
-import lv.ctco.zephyr.util.ObjectTransformer;
-import lv.ctco.zephyr.service.*;
-
 import java.io.IOException;
 import java.util.List;
+
+import lv.ctco.zephyr.beans.TestCase;
+import lv.ctco.zephyr.service.AuthService;
+import lv.ctco.zephyr.service.JiraService;
+import lv.ctco.zephyr.service.MetaInfo;
+import lv.ctco.zephyr.service.MetaInfoRetrievalService;
+import lv.ctco.zephyr.service.TestCaseResolutionService;
+import lv.ctco.zephyr.service.ZephyrService;
+import lv.ctco.zephyr.util.CustomPropertyNamingStrategy;
+import lv.ctco.zephyr.util.ObjectTransformer;
 
 public class ZephyrSyncService {
 
@@ -33,9 +37,8 @@ public class ZephyrSyncService {
         MetaInfo metaInfo = metaInfoRetrievalService.retrieve();
 
         List<TestCase> testCases = testCaseResolutionService.resolveTestCases();
-        List<Issue> issues = jiraService.getTestIssues();
 
-        zephyrService.mapTestCasesToIssues(testCases, issues);
+        zephyrService.mapTestCasesToIssues(testCases);
 
         for (TestCase testCase : testCases) {
             if (testCase.getId() == null) {
